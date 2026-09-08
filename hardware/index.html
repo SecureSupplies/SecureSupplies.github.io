@@ -55,34 +55,73 @@ footer{border-top:1px solid var(--line);padding:22px 0 44px;font-size:12.5px;col
 <div class="tools"><div class="wrap">
 <input type="search" id="q" placeholder="Search boards — VIC, 8XA, gas processor, speeduino, resonator…">
 <div class="chips" id="chips"></div>
-<div class="count" id="count">Loading…</div>
+<div class="count" id="count">Loading the live PCBWay library…</div>
 </div></div>
 <div class="wrap"><div class="grid" id="grid"></div></div>
 <footer><div class="wrap">
 Secure Supplies Group / Donatelli LLC · <a href="https://securesupplies.us">securesupplies.us</a> ·
 24/7 Desk (520) 435-1881 · Fuel Desk (818) 922-4583<br>
-Boards are open hardware. This index rebuilds itself daily from the live PCBWay library.
+Boards are open hardware. This page reads the PCBWay library live — it is never out of date.
 </div></footer>
 <script>
-let D=[],f='All',q='';
+const BMBNO='E9AF6EAA-8A83-4F';
+const API='https://member.pcbway.com/Project/GetProject_ShareProjectList?bmbno='+BMBNO+'&type=';
+const CATRULES=[
+ ['ECU / Speeduino / Hydrogen Hot Rod', /speeduino|speedunio|hyduino|core8|teensy|can hub|canpico|egt|map\/baro|miata|honda|m50|m52|m60|drop bear|ignitor|stim|\becu\b|ardu-stim|molex|dbw|auxiliary outputs/],
+ ['Steam Resonator & EPG', /steam resonator|\bepg\b/],
+ ['Gas Processor & Ionisation', /gas processor|led gas processor|led array|optical lens|intake|exhaust|egr|laser|spark pug|spark plug|ozonat/],
+ ['Water Fuel Cell & Cell Hardware', /wfc|water fuel cell|cell tubes|tube cell|anode|cathode|spacer|top cap|lower cap|tube holder|resonant cavity|pressure|flash back|fuel line|single cell|6 cell|9 cell|11 cell|cell holder|water body|nano bubble water fuel cell|9 tube/],
+ ['VIC, Bobbins, Cores & Chokes', /\bvic\b|bobbin|choke|u-core|u core|e core|ballast|balast|balun|impedance|bifilar|transformer/],
+ ['Voltrolysis Power & Switch Drivers', /8xa|9xa|9xb|9xd|9xam|\bscr\b|half bridge|h bridge|switch driver|switching circuit|\beec\b|electron extract|voltrolysis|alternator|power supply|home heater|puharich/],
+ ['GMS Control Cards', /\bgms\b|gate tuning|frequency generator|digital control|accelerator|taco|distributor|feedback|safety|voltage card|analog|analogue|pulse frequency|trigger board|auto start|autofill|les banki|injector card|matrix|db 37|k00|k11|k2 |k3 |k7 |k8|k20|solenoid|warning board|sequential gate|variable gate/],
+ ['Energy Harvesting & Experimental', /rectenna|rf power|energy harvesting|\btpu\b|tesla|battery charger|atu-100|magnetic propulsion|dynamysthesis/],
+];
+function category(t){const s=(t||'').toLowerCase();for(const [n,re] of CATRULES){if(re.test(s))return n;}return 'Other Boards & Parts';}
+function jsonp(page){return new Promise((res,rej)=>{
+  const cb='__ss'+Math.random().toString(36).slice(2);
+  const s=document.createElement('script');
+  const to=setTimeout(()=>{cleanup();rej(new Error('timeout'))},25000);
+  function cleanup(){clearTimeout(to);delete window[cb];s.remove();}
+  window[cb]=d=>{cleanup();res(d);};
+  s.onerror=()=>{cleanup();rej(new Error('net'));};
+  s.src=API+'&page='+page+'&callback='+cb;
+  document.head.appendChild(s);});}
+let D=[],CATS=[],f='All',q='';
 const $=id=>document.getElementById(id);
-fetch('data/catalogue.json?v='+Date.now()).then(r=>r.json()).then(j=>{
-  D=j.boards;
-  $('k1').textContent=j.count;
-  $('k2').textContent=j.total_views.toLocaleString();
-  const cats=[...new Set(D.map(r=>r.category))].sort();
-  $('k3').textContent=cats.length;
-  $('k4').textContent=(j.generated||'').split(' ')[0];
-  ['All'].concat(cats).forEach(c=>{
-    const b=document.createElement('button');
-    b.className='chip'+(c==='All'?' on':''); b.textContent=c;
-    b.onclick=()=>{f=c;[...$('chips').children].forEach(x=>x.classList.toggle('on',x.textContent===c));render();};
-    $('chips').appendChild(b);
-  });
-  $('q').oninput=e=>{q=e.target.value.toLowerCase();render();};
-  render();
-}).catch(e=>{$('count').textContent='Could not load catalogue data.';});
-function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function norm(it){
+  const img=((it.CoverPic||it.Pics||'')+'').split('?')[0];
+  return {id:it.Id,title:(it.Title||'').trim(),
+    url:'https://www.pcbway.com/project/shareproject/'+it.FileName+'.html',
+    image:img,views:it.Views||0,date:(it.AddDate||'').slice(0,10),
+    category:category(it.Title)};
+}
+(async ()=>{
+  try{
+    const first=await jsonp(1);
+    const total=first.TotalCount, pages=Math.ceil(total/12);
+    let items=first.DataList.slice();
+    const rest=await Promise.all(Array.from({length:pages-1},(_,i)=>jsonp(i+2).catch(()=>({DataList:[]}))));
+    rest.forEach(r=>{items=items.concat(r.DataList||[])});
+    const seen=new Set();
+    D=items.filter(it=>{if(seen.has(it.Id))return false;seen.add(it.Id);return true;}).map(norm)
+           .sort((a,b)=>b.views-a.views);
+    CATS=[...new Set(D.map(r=>r.category))].sort();
+    $('k1').textContent=D.length;
+    $('k2').textContent=D.reduce((s,r)=>s+r.views,0).toLocaleString();
+    $('k3').textContent=CATS.length;
+    $('k4').textContent=new Date().toISOString().slice(0,10);
+    ['All'].concat(CATS).forEach(c=>{
+      const b=document.createElement('button');
+      b.className='chip'+(c==='All'?' on':''); b.textContent=c;
+      b.onclick=()=>{f=c;[...$('chips').children].forEach(x=>x.classList.toggle('on',x.textContent===c));render();};
+      $('chips').appendChild(b);});
+    $('q').oninput=e=>{q=e.target.value.toLowerCase();render();};
+    render();
+  }catch(err){
+    $('count').textContent='Could not reach the PCBWay library right now. Open the PCBWay profile link above.';
+  }
+})();
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function render(){
   const L=D.filter(r=>(f==='All'||r.category===f)&&(!q||r.title.toLowerCase().includes(q)));
   $('count').textContent=L.length+' of '+D.length+' shown';
